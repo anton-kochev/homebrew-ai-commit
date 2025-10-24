@@ -25,11 +25,25 @@ jobs:
         run: |
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
+            echo "Using manually specified version: $VERSION"
           else
-            VERSION=$(curl -s https://api.github.com/repos/anton-kochev/ai-commit/releases/latest | jq -r .tag_name | sed 's/^v//')
+            echo "Fetching latest release from GitHub API..."
+            RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/anton-kochev/ai-commit/releases/latest)
+
+            TAG_NAME=$(echo "$RESPONSE" | jq -r '.tag_name')
+
+            if [ "$TAG_NAME" = "null" ] || [ -z "$TAG_NAME" ]; then
+              echo "Error: Could not fetch latest release"
+              echo "API Response:"
+              echo "$RESPONSE" | jq .
+              exit 1
+            fi
+
+            VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
+            echo "Latest release found: $TAG_NAME (version: $VERSION)"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Latest version: $VERSION"
 
       - name: Check if update needed
         id: check_update
