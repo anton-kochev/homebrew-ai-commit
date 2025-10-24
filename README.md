@@ -1,3 +1,5 @@
+[![Update Formula](https://github.com/anton-kochev/homebrew-ai-commit/actions/workflows/update-formula.yml/badge.svg)](https://github.com/anton-kochev/homebrew-ai-commit/actions/workflows/update-formula.yml)
+
 # Homebrew tap for ai-commit
 
 ## Installation
