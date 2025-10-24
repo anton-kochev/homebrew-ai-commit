@@ -1,0 +1,113 @@
+name: Update Formula
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update to (e.g., 0.4.3)'
+        required: false
+        type: string
+  schedule:
+    # Run daily at 9 AM UTC to check for new releases
+    - cron: '0 9 * * *'
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get latest release version
+        id: get_version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(curl -s https://api.github.com/repos/anton-kochev/ai-commit/releases/latest | jq -r .tag_name | sed 's/^v//')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Latest version: $VERSION"
+
+      - name: Check if update needed
+        id: check_update
+        run: |
+          CURRENT_VERSION=$(grep 'version' Formula/ai-commit.rb | head -1 | sed -E 's/.*"(.*)".*/\1/')
+          NEW_VERSION="${{ steps.get_version.outputs.version }}"
+          echo "Current version: $CURRENT_VERSION"
+          echo "New version: $NEW_VERSION"
+
+          if [ "$CURRENT_VERSION" = "$NEW_VERSION" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "Formula is already up to date"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "Update needed"
+          fi
+
+      - name: Download and calculate checksums
+        if: steps.check_update.outputs.needs_update == 'true'
+        id: checksums
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+
+          # Download ARM Mac binary
+          curl -L "https://github.com/anton-kochev/ai-commit/releases/download/v${VERSION}/ai-commit-aarch64-apple-darwin.tar.gz" -o /tmp/ai-commit-arm.tar.gz
+          ARM_SHA=$(shasum -a 256 /tmp/ai-commit-arm.tar.gz | awk '{print $1}')
+          echo "arm_sha=$ARM_SHA" >> $GITHUB_OUTPUT
+
+          # Download Intel Mac binary
+          curl -L "https://github.com/anton-kochev/ai-commit/releases/download/v${VERSION}/ai-commit-x86_64-apple-darwin.tar.gz" -o /tmp/ai-commit-intel.tar.gz
+          INTEL_SHA=$(shasum -a 256 /tmp/ai-commit-intel.tar.gz | awk '{print $1}')
+          echo "intel_sha=$INTEL_SHA" >> $GITHUB_OUTPUT
+
+          # Download Linux binary
+          curl -L "https://github.com/anton-kochev/ai-commit/releases/download/v${VERSION}/ai-commit-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/ai-commit-linux.tar.gz
+          LINUX_SHA=$(shasum -a 256 /tmp/ai-commit-linux.tar.gz | awk '{print $1}')
+          echo "linux_sha=$LINUX_SHA" >> $GITHUB_OUTPUT
+
+          echo "Checksums calculated:"
+          echo "ARM Mac: $ARM_SHA"
+          echo "Intel Mac: $INTEL_SHA"
+          echo "Linux: $LINUX_SHA"
+
+      - name: Update formula
+        if: steps.check_update.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          ARM_SHA="${{ steps.checksums.outputs.arm_sha }}"
+          INTEL_SHA="${{ steps.checksums.outputs.intel_sha }}"
+          LINUX_SHA="${{ steps.checksums.outputs.linux_sha }}"
+
+          # Update version
+          sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/ai-commit.rb
+
+          # Update ARM Mac URL and SHA
+          sed -i "s|download/v[0-9.]\+/ai-commit-aarch64-apple-darwin.tar.gz|download/v$VERSION/ai-commit-aarch64-apple-darwin.tar.gz|" Formula/ai-commit.rb
+          sed -i "/ai-commit-aarch64-apple-darwin.tar.gz/,/sha256/ s/sha256 \".*\"/sha256 \"$ARM_SHA\"/" Formula/ai-commit.rb
+
+          # Update Intel Mac URL and SHA
+          sed -i "s|download/v[0-9.]\+/ai-commit-x86_64-apple-darwin.tar.gz|download/v$VERSION/ai-commit-x86_64-apple-darwin.tar.gz|" Formula/ai-commit.rb
+          sed -i "/ai-commit-x86_64-apple-darwin.tar.gz/,/sha256/ s/sha256 \".*\"/sha256 \"$INTEL_SHA\"/" Formula/ai-commit.rb
+
+          # Update Linux URL and SHA
+          sed -i "s|download/v[0-9.]\+/ai-commit-x86_64-unknown-linux-gnu.tar.gz|download/v$VERSION/ai-commit-x86_64-unknown-linux-gnu.tar.gz|" Formula/ai-commit.rb
+          sed -i "/ai-commit-x86_64-unknown-linux-gnu.tar.gz/,/sha256/ s/sha256 \".*\"/sha256 \"$LINUX_SHA\"/" Formula/ai-commit.rb
+
+      - name: Commit and push changes
+        if: steps.check_update.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ai-commit.rb
+          git commit -m "Update ai-commit to $VERSION"
+          git push
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check_update.outputs.needs_update }}" = "true" ]; then
+            echo "✅ Formula updated to version ${{ steps.get_version.outputs.version }}"
+          else
+            echo "ℹ️ No update needed - formula is already at the latest version"
+          fi
